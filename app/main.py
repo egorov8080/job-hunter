@@ -3,16 +3,21 @@ import asyncio
 import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
-from sqlalchemy import text
 
 from app.config import settings
 from app.database import engine
 from app.models.base import Base
 from app.bot.handlers import router
 from app.workers.scheduler import WorkerScheduler
-from app.utils.browser import browser_manager
 
 log = structlog.get_logger()
+
+HAS_PLAYWRIGHT = False
+try:
+    from app.utils.browser import browser_manager
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    pass
 
 
 async def init_db():
@@ -43,38 +48,39 @@ async def main():
 
     log.info("starting_job_hunter")
 
-    # Инициализация БД
     await init_db()
 
-    # Telegram-бот
     bot = Bot(token=settings.tg_bot_token)
     dp = Dispatcher()
     dp.include_router(router)
 
-    # Браузер
-    await browser_manager.start()
+    if HAS_PLAYWRIGHT:
+        await browser_manager.start()
+        log.info("playwright_started")
+    else:
+        log.info("playwright_not_available", mode="api_only")
 
-    # Планировщик
     scheduler = WorkerScheduler(
         notify_callback=lambda text: notify_telegram(bot, text)
     )
     scheduler.start()
 
-    # Стартовое уведомление
     await notify_telegram(
         bot,
         "🚀 <b>Job Hunter запущен!</b>\n\n"
         f"Позиция: {settings.desired_position}\n"
         f"Зарплата: {settings.desired_salary_min:,}–{settings.desired_salary_max:,}\n"
         f"Интервал: {settings.check_interval_sec // 60} мин\n"
-        f"Лимит: {settings.max_applies_per_day} откликов/день",
+        f"Лимит: {settings.max_applies_per_day} откликов/день\n"
+        f"Режим: {'Playwright' if HAS_PLAYWRIGHT else 'API-only'}",
     )
 
     try:
         await dp.start_polling(bot)
     finally:
         scheduler.stop()
-        await browser_manager.close()
+        if HAS_PLAYWRIGHT:
+            await browser_manager.close()
         await engine.dispose()
         log.info("job_hunter_stopped")
 
