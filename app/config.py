@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     anthropic_base_url: str = ""
 
     # Database
-    database_url: str = "postgresql+asyncpg://jobhunter:jobhunter@localhost:5432/jobhunter"
-    redis_url: str = "redis://localhost:6379/0"
+    database_url: str = "sqlite+aiosqlite:///data/jobhunter.db"
+    redis_url: str = ""
 
     # Job platforms
     hh_login: str = ""
