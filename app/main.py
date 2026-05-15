@@ -54,12 +54,13 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
 
-    if HAS_PLAYWRIGHT:
+    playwright_ok = HAS_PLAYWRIGHT
+    if playwright_ok:
         try:
             await browser_manager.start()
             log.info("playwright_started")
         except Exception as e:
-            HAS_PLAYWRIGHT = False
+            playwright_ok = False
             log.warning("playwright_start_failed", error=str(e), mode="api_only")
     else:
         log.info("playwright_not_available", mode="api_only")
@@ -76,14 +77,14 @@ async def main():
         f"Зарплата: {settings.desired_salary_min:,}–{settings.desired_salary_max:,}\n"
         f"Интервал: {settings.check_interval_sec // 60} мин\n"
         f"Лимит: {settings.max_applies_per_day} откликов/день\n"
-        f"Режим: {'Playwright' if HAS_PLAYWRIGHT else 'API-only'}",
+        f"Режим: {'Playwright' if playwright_ok else 'API-only'}",
     )
 
     try:
         await dp.start_polling(bot)
     finally:
         scheduler.stop()
-        if HAS_PLAYWRIGHT:
+        if playwright_ok:
             await browser_manager.close()
         await engine.dispose()
         log.info("job_hunter_stopped")
