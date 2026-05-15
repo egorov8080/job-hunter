@@ -1,12 +1,21 @@
+import re
+
 import httpx
 import structlog
+from bs4 import BeautifulSoup
 
-from app.config import settings
 from app.parsers.base import ParsedVacancy
 
 log = structlog.get_logger()
 
-HH_API = "https://api.hh.ru"
+HH_BASE = "https://hh.ru"
+HH_SEARCH = "https://hh.ru/search/vacancy"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
 
 EXPERIENCE_MAP = {
     "no": "noExperience",
@@ -19,20 +28,15 @@ EXPERIENCE_MAP = {
 class HHParser:
     platform = "hh"
 
-    def __init__(self):
-        self.headers = {
-            "User-Agent": "job-hunter/1.0 (i.egorov8080@gmail.com)",
-        }
-
     async def login(self) -> bool:
         return True
 
     async def search_vacancies(self, query: str, **filters) -> list[ParsedVacancy]:
         params = {
             "text": query,
-            "per_page": 50,
             "search_field": "name",
-            "order_by": "publication_time",
+            "enable_snippets": "true",
+            "no_magic": "true",
         }
 
         if filters.get("remote", True):
@@ -48,74 +52,119 @@ class HHParser:
 
         vacancies = []
         try:
-            async with httpx.AsyncClient(headers=self.headers, timeout=30) as client:
-                resp = await client.get(f"{HH_API}/vacancies", params=params)
+            async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=30) as client:
+                resp = await client.get(HH_SEARCH, params=params)
                 resp.raise_for_status()
-                data = resp.json()
 
-            for item in data.get("items", []):
-                vacancy = self._parse_item(item)
+            soup = BeautifulSoup(resp.text, "lxml")
+            cards = soup.select('[data-qa="vacancy-serp__vacancy"]')
+            log.info("hh_search_results", query=query, count=len(cards))
+
+            for card in cards[:50]:
+                vacancy = self._parse_card(card)
                 if vacancy:
                     vacancies.append(vacancy)
 
-            log.info("hh_api_search", query=query, found=len(vacancies))
-
         except Exception as e:
-            log.error("hh_api_search_error", query=query, error=str(e))
+            log.error("hh_search_error", query=query, error=str(e))
 
         return vacancies
 
-    def _parse_item(self, item: dict) -> ParsedVacancy | None:
+    def _parse_card(self, card) -> ParsedVacancy | None:
+        title_el = card.select_one('[data-qa="serp-item__title"]')
+        if not title_el:
+            return None
+
+        title = title_el.get_text(strip=True)
+        url = title_el.get("href", "")
+
+        ext_id_match = re.search(r"/vacancy/(\d+)", url)
+        ext_id = ext_id_match.group(1) if ext_id_match else ""
+
+        company_el = card.select_one('[data-qa="vacancy-serp__vacancy-employer"]')
+        company_name = company_el.get_text(strip=True) if company_el else ""
+        company_url = ""
+        if company_el:
+            link = company_el.select_one("a")
+            if link:
+                company_url = link.get("href", "")
+
         salary_from, salary_to, currency = None, None, ""
-        sal = item.get("salary")
-        if sal:
-            salary_from = sal.get("from")
-            salary_to = sal.get("to")
-            currency = sal.get("currency", "")
+        salary_el = card.select_one('[data-qa="vacancy-serp__vacancy-compensation"]')
+        if salary_el:
+            salary_from, salary_to, currency = self._parse_salary(salary_el.get_text())
 
-        area = item.get("area", {})
-        schedule = item.get("schedule", {})
-        is_remote = schedule.get("id") == "remote"
+        loc_el = card.select_one('[data-qa="vacancy-serp__vacancy-address"]')
+        location = loc_el.get_text(strip=True) if loc_el else ""
+        is_remote = "удалённ" in location.lower() or "remote" in location.lower()
 
-        employer = item.get("employer", {})
+        clean_url = url.split("?")[0] if url else ""
 
         return ParsedVacancy(
             platform="hh",
-            external_id=str(item.get("id", "")),
-            url=item.get("alternate_url", ""),
-            title=item.get("name", ""),
-            company_name=employer.get("name", ""),
-            company_url=employer.get("alternate_url", ""),
+            external_id=ext_id,
+            url=clean_url,
+            title=title,
+            company_name=company_name,
+            company_url=company_url,
             salary_from=salary_from,
             salary_to=salary_to,
             salary_currency=currency,
-            location=area.get("name", ""),
+            location=location,
             is_remote=is_remote,
         )
+
+    def _parse_salary(self, text: str) -> tuple[int | None, int | None, str]:
+        text = text.replace("\xa0", "").replace(" ", "")
+        currency = ""
+        if "₽" in text or "руб" in text:
+            currency = "RUB"
+        elif "$" in text or "USD" in text:
+            currency = "USD"
+        elif "€" in text or "EUR" in text:
+            currency = "EUR"
+
+        numbers = [int(x) for x in re.findall(r"\d+", text)]
+        if "от" in text and "до" in text and len(numbers) >= 2:
+            return numbers[0], numbers[1], currency
+        elif "от" in text and numbers:
+            return numbers[0], None, currency
+        elif "до" in text and numbers:
+            return None, numbers[0], currency
+        elif numbers:
+            return numbers[0], numbers[-1] if len(numbers) > 1 else None, currency
+        return None, None, currency
 
     async def get_vacancy_details(self, url: str) -> ParsedVacancy | None:
         vacancy_id = url.rstrip("/").split("/")[-1].split("?")[0]
         try:
-            async with httpx.AsyncClient(headers=self.headers, timeout=30) as client:
-                resp = await client.get(f"{HH_API}/vacancies/{vacancy_id}")
+            async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=30) as client:
+                resp = await client.get(url)
                 resp.raise_for_status()
-                data = resp.json()
 
-            skills = [s["name"] for s in data.get("key_skills", [])]
-            experience = data.get("experience", {}).get("name", "")
-            employment = data.get("employment", {}).get("name", "")
+            soup = BeautifulSoup(resp.text, "lxml")
 
-            desc_html = data.get("description", "")
-            from html import unescape
-            import re
-            description = re.sub(r"<[^>]+>", " ", unescape(desc_html))
-            description = re.sub(r"\s+", " ", description).strip()
+            title_el = soup.select_one('[data-qa="vacancy-title"]')
+            title = title_el.get_text(strip=True) if title_el else ""
+
+            desc_el = soup.select_one('[data-qa="vacancy-description"]')
+            description = desc_el.get_text(separator="\n", strip=True) if desc_el else ""
+
+            skills = []
+            for tag in soup.select('[data-qa="bloko-tag__text"], [data-qa="skills-element"]'):
+                skills.append(tag.get_text(strip=True))
+
+            exp_el = soup.select_one('[data-qa="vacancy-experience"]')
+            experience = exp_el.get_text(strip=True) if exp_el else ""
+
+            emp_el = soup.select_one('[data-qa="vacancy-view-employment-mode"]')
+            employment = emp_el.get_text(strip=True) if emp_el else ""
 
             return ParsedVacancy(
                 platform="hh",
                 external_id=vacancy_id,
-                url=data.get("alternate_url", url),
-                title=data.get("name", ""),
+                url=url,
+                title=title,
                 description=description,
                 experience=experience,
                 employment_type=employment,
@@ -123,13 +172,13 @@ class HHParser:
             )
 
         except Exception as e:
-            log.error("hh_api_details_error", vacancy_id=vacancy_id, error=str(e))
+            log.error("hh_details_error", url=url, error=str(e))
             return None
 
     async def apply_to_vacancy(self, url: str, cover_letter: str) -> bool:
-        log.warning("hh_api_apply_not_supported", url=url, reason="requires OAuth token")
+        log.warning("hh_apply_not_supported", url=url, reason="requires browser session")
         return False
 
     async def check_messages(self) -> list[dict]:
-        log.info("hh_api_messages_skip", reason="requires OAuth token")
+        log.info("hh_messages_skip", reason="requires browser session")
         return []
