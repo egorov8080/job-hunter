@@ -24,6 +24,7 @@ dependencies = [
     "tenacity>=9.0.0",
     "playwright>=1.40.0",
     "aiolimiter>=1.1.0",
+    "aiohttp-socks>=0.8.0",
 ]
 
 [project.optional-dependencies]
