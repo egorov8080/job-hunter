@@ -12,7 +12,6 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="🔍 Вакансии"), KeyboardButton(text="📊 Статистика")],
             [KeyboardButton(text="⭐ Топ вакансии"), KeyboardButton(text="📩 Сообщения")],
             [KeyboardButton(text="⚙️ Настройки"), KeyboardButton(text="📋 Логи")],
-            [KeyboardButton(text="💎 Баланс AI")],
         ],
         resize_keyboard=True,
     )
@@ -79,5 +78,6 @@ def settings_keyboard(is_paused: bool = False, auto_apply: bool = False) -> Inli
         ],
         [
             InlineKeyboardButton(text="🔄 Искать сейчас", callback_data="force_search"),
+            InlineKeyboardButton(text="💎 Баланс AI", callback_data="show_balance"),
         ],
     ])

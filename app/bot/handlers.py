@@ -158,6 +158,7 @@ async def btn_settings(message: Message, **kw):
         f"💰 Зарплата: {settings.desired_salary_min:,}–{settings.desired_salary_max:,}\n"
         f"⏱ Интервал: {settings.check_interval_sec // 60} мин\n"
         f"🎯 Макс. откликов/день: {settings.max_applies_per_day}\n"
+        f"🔔 Уведомления: {settings.notify_hour_start}:00–{settings.notify_hour_end}:00 МСК\n"
         f"{'⏸ Пауза' if paused else '▶️ Работает'} | "
         f"{'🟢 Авто-отклик' if auto else '⚪ Авто-отклик выкл'}",
         parse_mode="HTML",
@@ -235,10 +236,14 @@ async def cmd_resume(message: Message, **kw):
     await message.answer("▶️ Возобновлено", reply_markup=main_menu())
 
 
-@router.message(F.text == "💎 Баланс AI")
 @router.message(Command("balance"))
 @admin_only
-async def btn_balance(message: Message, **kw):
+async def cmd_balance(message: Message, **kw):
+    await _send_balance(message)
+
+
+async def _send_balance(target):
+    """Отправить баланс AI — работает и для Message, и для CallbackQuery."""
     import httpx
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -251,16 +256,25 @@ async def btn_balance(message: Message, **kw):
         inp = data.get("total_input_tokens", 0)
         out = data.get("total_output_tokens", 0)
         total = data.get("total_tokens_used", 0)
-        await message.answer(
+        text = (
             f"💎 <b>Баланс WaveAPI</b>\n\n"
             f"💰 Баланс: <b>{balance} центов</b> (${balance/100:.2f})\n"
             f"📥 Input токены: <b>{inp:,}</b>\n"
             f"📤 Output токены: <b>{out:,}</b>\n"
-            f"📊 Всего использовано: <b>{total:,}</b>",
-            parse_mode="HTML",
+            f"📊 Всего использовано: <b>{total:,}</b>"
         )
+        if isinstance(target, CallbackQuery):
+            await target.message.answer(text, parse_mode="HTML")
+            await target.answer()
+        else:
+            await target.answer(text, parse_mode="HTML")
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        err = f"❌ Ошибка: {e}"
+        if isinstance(target, CallbackQuery):
+            await target.message.answer(err)
+            await target.answer()
+        else:
+            await target.answer(err)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -578,6 +592,12 @@ async def cb_force_search(callback: CallbackQuery, **kw):
     from app.workers.vacancy_worker import run_vacancy_search
     count = await run_vacancy_search()
     await callback.message.answer(f"🔍 Найдено <b>{count}</b> новых вакансий", parse_mode="HTML")
+
+
+@router.callback_query(F.data == "show_balance")
+@admin_only
+async def cb_show_balance(callback: CallbackQuery, **kw):
+    await _send_balance(callback)
 
 
 @router.callback_query(F.data.startswith("cancel_apply:"))

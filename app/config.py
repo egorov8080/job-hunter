@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     max_delay_sec: int = 12
     max_applies_per_day: int = 200
 
+    # Notifications
+    notify_hour_start: int = 9   # С какого часа присылать уведомления (МСК)
+    notify_hour_end: int = 22    # До какого часа
+
     @property
     def resume_text(self) -> str:
         p = Path(self.resume_text_path)
