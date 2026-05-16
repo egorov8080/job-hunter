@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     # Telegram
     tg_bot_token: str = ""
     tg_admin_chat_id: str = ""
+    tg_api_server: str = ""  # Custom Telegram Bot API URL (e.g. for proxy)
+    tg_proxy: str = ""  # SOCKS5/HTTP proxy for Telegram (e.g. socks5://127.0.0.1:40000)
 
     # Anthropic
     anthropic_api_key: str = ""

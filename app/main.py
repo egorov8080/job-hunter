@@ -2,6 +2,8 @@ import asyncio
 
 import structlog
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 
 from app.config import settings
@@ -50,7 +52,15 @@ async def main():
 
     await init_db()
 
-    bot = Bot(token=settings.tg_bot_token)
+    session = None
+    if settings.tg_api_server:
+        session = AiohttpSession(api=settings.tg_api_server)
+        log.info("using_custom_tg_api", api=settings.tg_api_server)
+    elif settings.tg_proxy:
+        from aiohttp import BasicAuth
+        session = AiohttpSession(proxy=settings.tg_proxy)
+        log.info("using_tg_proxy", proxy=settings.tg_proxy)
+    bot = Bot(token=settings.tg_bot_token, session=session)
     dp = Dispatcher()
     dp.include_router(router)
 
