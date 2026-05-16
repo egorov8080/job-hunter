@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # Anti-ban
     min_delay_sec: int = 3
     max_delay_sec: int = 12
-    max_applies_per_day: int = 30
+    max_applies_per_day: int = 200
 
     @property
     def resume_text(self) -> str:
