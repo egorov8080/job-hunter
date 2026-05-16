@@ -198,11 +198,9 @@ class HHParser:
         return []
 
     async def login(self) -> bool:
-        """Login via Playwright if available."""
-        pw = self._get_playwright()
-        if pw:
-            return await pw.login()
-        return True  # HTML scraping doesn't need login
+        """Always returns True — search works via HTML scraping without login.
+        Playwright login is only needed for apply/messages and is called there."""
+        return True
 
     def _get_playwright(self):
         """Get HHPlaywright instance if available."""
