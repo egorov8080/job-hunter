@@ -477,11 +477,21 @@ class HHPlaywright:
             if not await self.login():
                 return 0
 
+        # Recreate page to avoid stale crashed state
+        if self._page and not self._page.is_closed():
+            try:
+                await self._page.close()
+            except Exception:
+                pass
+            self._page = None
+
         page = await self._get_page()
         bumped = 0
 
         try:
-            await page.goto(HH_RESUMES, wait_until="domcontentloaded", timeout=45000)
+            # Use lightweight wait_until="commit" to reduce memory load
+            await page.goto(HH_RESUMES, wait_until="commit", timeout=45000)
+            await page.wait_for_timeout(5000)
             await random_delay(2, 4)
 
             # Find all "Поднять в поиске" buttons (free bump available)

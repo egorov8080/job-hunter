@@ -25,6 +25,17 @@ class BrowserManager:
             "--disable-blink-features=AutomationControlled",
             "--disable-dev-shm-usage",
             "--no-sandbox",
+            # Memory savings for 1GB RAM VPS
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-background-timer-throttling",
+            "--disable-renderer-backgrounding",
+            "--disable-features=TranslateUI,BlinkGenPropertyTrees",
+            "--disable-ipc-flooding-protection",
+            "--memory-pressure-off",
+            "--js-flags=--max-old-space-size=512",
         ]
         self._browser = await self._playwright.chromium.launch(
             headless=settings.browser_headless,
