@@ -45,11 +45,23 @@ async def check_all_messages() -> list[dict]:
 
 async def _save_message(msg: dict) -> dict | None:
     async with async_session() as session:
-        # Проверяем дубликат по thread_id
+        # Dedup by thread_id when present
         if msg.get("thread_id"):
             existing = await session.scalar(
                 select(RecruiterMessage.id).where(
                     RecruiterMessage.external_thread_id == msg["thread_id"]
+                )
+            )
+            if existing:
+                return None
+        else:
+            # No thread_id — dedup by platform+title+company+status to avoid
+            # re-notifying every 5 min for the same chats
+            existing = await session.scalar(
+                select(RecruiterMessage.id).where(
+                    RecruiterMessage.platform == msg.get("platform", ""),
+                    RecruiterMessage.sender_company == msg.get("company", ""),
+                    RecruiterMessage.text == msg.get("text", msg.get("status", "")),
                 )
             )
             if existing:
