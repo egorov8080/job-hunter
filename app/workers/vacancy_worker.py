@@ -13,6 +13,7 @@ from app.parsers.base import ParsedVacancy
 from app.parsers.hh import HHParser
 from app.parsers.workspace import WorkspaceParser
 from app.parsers.geekjob import GeekJobParser
+from app.parsers.habr import HabrParser
 from app.ai.claude import claude_ai
 from app.utils.anti_detect import random_delay
 
@@ -32,6 +33,7 @@ SEARCH_QUERIES = [
 
 PARSERS = {
     "hh": HHParser(),
+    "habr": HabrParser(),
     "geekjob": GeekJobParser(),
     "workspace": WorkspaceParser(),
 }

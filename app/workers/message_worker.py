@@ -7,6 +7,7 @@ from app.models.vacancy import Vacancy
 from app.parsers.hh import HHParser
 from app.parsers.workspace import WorkspaceParser
 from app.parsers.geekjob import GeekJobParser
+from app.parsers.habr import HabrParser
 from app.ai.claude import claude_ai
 from app.utils.anti_detect import random_delay
 
@@ -14,6 +15,7 @@ log = structlog.get_logger()
 
 PARSERS = {
     "hh": HHParser(),
+    "habr": HabrParser(),
     "workspace": WorkspaceParser(),
     "geekjob": GeekJobParser(),
 }
