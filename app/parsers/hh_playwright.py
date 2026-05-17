@@ -635,6 +635,121 @@ class HHPlaywright:
 
         return bumped
 
+    async def send_thanks_via_clicks(self, max_count: int = 3) -> int:
+        """Open the discard tab, click each rejection card and send thanks.
+        Works around hh.ru cards being JS-bound divs (no href)."""
+        if not self._logged_in:
+            if not await self.login():
+                return 0
+
+        page = await self._get_page()
+        sent = 0
+
+        try:
+            await page.goto(
+                f"{HH_NEGOTIATIONS}?page=0&filter=response&state=discard",
+                wait_until="domcontentloaded", timeout=45000,
+            )
+            try:
+                await page.wait_for_selector('[data-qa="negotiations-item"]', timeout=10000)
+            except PlaywrightTimeout:
+                log.warning("hh_thanks_no_discards")
+                return 0
+            await page.wait_for_timeout(2000)
+
+            card_count = await page.locator('[data-qa="negotiations-item"]').count()
+            log.info("hh_thanks_cards_found", count=card_count)
+
+            for idx in range(min(card_count, max_count * 2)):
+                if sent >= max_count:
+                    break
+
+                # Re-query each iteration — after clicking and going back,
+                # old handles are stale
+                try:
+                    await page.goto(
+                        f"{HH_NEGOTIATIONS}?page=0&filter=response&state=discard",
+                        wait_until="domcontentloaded", timeout=45000,
+                    )
+                    await page.wait_for_selector('[data-qa="negotiations-item"]', timeout=10000)
+                    await page.wait_for_timeout(1500)
+
+                    cards = page.locator('[data-qa="negotiations-item"]')
+                    if idx >= await cards.count():
+                        break
+
+                    # Click the i-th card
+                    target = cards.nth(idx)
+                    title_el = target.locator('[data-qa="negotiations-item-title"]').first
+                    try:
+                        title_text = await title_el.inner_text(timeout=2000)
+                    except Exception:
+                        title_text = "?"
+                    log.info("hh_thanks_click_card", idx=idx, title=title_text[:60])
+
+                    async with page.expect_navigation(timeout=15000, wait_until="domcontentloaded"):
+                        await target.click()
+                    await page.wait_for_timeout(2500)
+
+                    ok = await self._try_send_thanks_on_current_page()
+                    log.info("hh_thanks_card_result", idx=idx, sent=ok, page=page.url)
+                    if ok:
+                        sent += 1
+                        await random_delay(60, 120)
+                except PlaywrightTimeout:
+                    log.warning("hh_thanks_card_timeout", idx=idx)
+                    continue
+                except Exception as e:
+                    log.warning("hh_thanks_card_error", idx=idx, error=str(e))
+                    continue
+
+            log.info("hh_thanks_done", sent=sent)
+            return sent
+
+        except Exception as e:
+            log.error("hh_thanks_overall_error", error=str(e))
+            return sent
+
+    async def _try_send_thanks_on_current_page(self) -> bool:
+        """We are on a negotiation chat page. Try to send the thanks message."""
+        page = self._page
+        if not page or page.is_closed():
+            return False
+
+        try:
+            chat_input = await page.query_selector('[data-qa="chatik-new-message-text"]')
+            if not chat_input:
+                chat_input = await page.query_selector('textarea[placeholder*="Сообщение"]')
+            if not chat_input:
+                chat_input = await page.query_selector('textarea[name="message"]')
+            if not chat_input:
+                chat_input = await page.query_selector('div[contenteditable="true"]')
+
+            if not chat_input:
+                await self._save_debug_screenshot(page, "thanks_no_input")
+                log.info("hh_thanks_no_input", url=page.url)
+                return False
+
+            await chat_input.fill("Спасибо за обратную связь! Желаю успехов в подборе кандидата.")
+            await page.wait_for_timeout(800)
+
+            send_btn = await page.query_selector('[data-qa="chatik-do-send-message"]')
+            if not send_btn:
+                send_btn = await page.query_selector('button:has-text("Отправить")')
+            if not send_btn:
+                send_btn = await page.query_selector('button[type="submit"]')
+            if not send_btn:
+                await self._save_debug_screenshot(page, "thanks_no_send_btn")
+                return False
+
+            await send_btn.click()
+            await page.wait_for_timeout(2500)
+            return True
+
+        except Exception as e:
+            log.warning("hh_thanks_send_error", error=str(e))
+            return False
+
     async def send_rejection_thanks(self, negotiation_url: str) -> bool:
         """Send a 'thanks for feedback' message in a rejected negotiation chat.
         This keeps the resume active in hh.ru rankings."""

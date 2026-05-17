@@ -92,11 +92,24 @@ async def process_rejection_thanks(max_count: int = 3) -> int:
     Conservative limits to avoid hh.ru anti-spam:
     - max_count messages per run (default 3)
     - 60-120 sec random delay between sends
+
+    hh.ru cards have no href (JS-bound) — we click each card in turn
+    via send_thanks_via_clicks.
     """
     from app.parsers.hh_playwright import hh_playwright
     if not hh_playwright:
         return 0
 
+    # New click-based approach — works without thread_id
+    try:
+        sent = await hh_playwright.send_thanks_via_clicks(max_count=max_count)
+        log.info("rejection_thanks_complete", sent=sent)
+        return sent
+    except Exception as e:
+        log.error("rejection_thanks_error", error=str(e))
+        return 0
+
+    # Old approach kept below for reference (uses statuses + thread_id)
     statuses = await hh_playwright.check_negotiations_status()
     rejections = [s for s in statuses if s.get("tab") == "discard"]
 
