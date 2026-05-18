@@ -139,7 +139,19 @@ class WorkerScheduler:
             new_msgs = await check_all_messages()
             if new_msgs:
                 platform_label = {"hh": "hh.ru", "habr": "Хабр Карьера", "avito": "Авито"}
+                REJECT_PAT = ("отказ", "не подош", "отклонил", "решил остановить")
                 for msg in new_msgs:
+                    # Skip rejection notifications — too noisy
+                    status_lc = (msg.get("status", "") or "").lower()
+                    text_lc = (msg.get("text", "") or "").lower()
+                    if any(k in status_lc or k in text_lc for k in REJECT_PAT):
+                        log.info(
+                            "msg_skip_rejection",
+                            platform=msg.get("platform"),
+                            title=msg.get("title", "")[:50],
+                        )
+                        continue
+
                     plat = msg.get("platform", "")
                     label = platform_label.get(plat, plat or "—")
                     title = msg.get("title") or ""
