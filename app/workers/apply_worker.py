@@ -66,8 +66,14 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
 
             # Отправляем отклик с глобальным таймаутом 2 минуты
             result = False
+            parser = None
             if vacancy.platform == "hh":
                 parser = HHParser()
+            elif vacancy.platform == "habr":
+                from app.parsers.habr import HabrParser
+                parser = HabrParser()
+
+            if parser:
                 try:
                     await asyncio.wait_for(parser.login(), timeout=60)
                     result = await asyncio.wait_for(
