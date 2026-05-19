@@ -315,6 +315,28 @@ class HHPlaywright:
                     pass
                 await page.wait_for_timeout(2000)
 
+            # Handle "Вы откликаетесь на вакансию в другой стране" modal
+            try:
+                clicked_anyway = await page.evaluate(
+                    """() => {
+                        const buttons = document.querySelectorAll('button, a[role=button]');
+                        for (const b of buttons) {
+                            const t = (b.innerText || '').trim().toLowerCase();
+                            if (t === 'все равно откликнуться' || t === 'всё равно откликнуться'
+                                || t === 'все равно' || t === 'всё равно') {
+                                b.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }"""
+                )
+                if clicked_anyway:
+                    log.info("hh_clicked_foreign_country_anyway")
+                    await page.wait_for_timeout(2500)
+            except Exception as e:
+                log.warning("hh_foreign_modal_error", error=str(e))
+
             # We're now either on the vacancy_response page or in the response modal
             await self._fill_response_form(page, cover_letter, vacancy_url)
 
@@ -337,6 +359,28 @@ class HHPlaywright:
                     except Exception:
                         pass
                 await submit_btn.click()
+                await page.wait_for_timeout(1500)
+
+                # After submit also handle "foreign country" modal if appears here
+                try:
+                    clicked_anyway_2 = await page.evaluate(
+                        """() => {
+                            const buttons = document.querySelectorAll('button, a[role=button]');
+                            for (const b of buttons) {
+                                const t = (b.innerText || '').trim().toLowerCase();
+                                if (t === 'все равно откликнуться' || t === 'всё равно откликнуться') {
+                                    b.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        }"""
+                    )
+                    if clicked_anyway_2:
+                        log.info("hh_clicked_foreign_anyway_post_submit")
+                        await page.wait_for_timeout(2000)
+                except Exception:
+                    pass
 
                 # Wait up to 12s for any of: URL change to negotiations,
                 # success element, or visible 'отклик отправлен' text
