@@ -245,42 +245,53 @@ class HHOAuth:
         except httpx.RequestError as e:
             return False, {"error": f"http: {e}"}
 
-        # If token died — drop cache, re-auth and retry once
+        # Check body BEFORE retrying on 401/403 — these statuses may be
+        # business errors (already applied, vacancy archived, etc.)
+        body_text = r.text or ""
         if r.status_code in (401, 403):
-            log.warning("oauth_token_died_retrying")
-            TOKEN_FILE.unlink(missing_ok=True)
-            token2 = await self.get_token()
-            if token2:
-                try:
-                    r = await _post(token2)
-                except httpx.RequestError as e:
-                    return False, {"error": f"http_retry: {e}"}
+            # HH uses 403 with body for business errors. Only retry if it really
+            # looks like a token problem (no body or auth keywords).
+            looks_like_auth_dead = (
+                not body_text
+                or "token" in body_text.lower()
+                or "unauthorized" in body_text.lower()
+                or "auth" in body_text.lower() and "applied" not in body_text.lower()
+            )
+            if looks_like_auth_dead and "already" not in body_text.lower():
+                log.warning("oauth_token_died_retrying", body=body_text[:200])
+                TOKEN_FILE.unlink(missing_ok=True)
+                token2 = await self.get_token()
+                if token2:
+                    try:
+                        r = await _post(token2)
+                    except httpx.RequestError as e:
+                        return False, {"error": f"http_retry: {e}"}
 
         if r.status_code in (200, 201, 204):
             return True, {"status": r.status_code}
-        if r.status_code == 400:
+        # Parse JSON body for both 400 AND 403 — HH uses both for business errors
+        if r.status_code in (400, 403):
             try:
                 d = r.json()
             except Exception:
-                d = {"raw": r.text[:200]}
+                d = {"raw": (r.text or "")[:200]}
             errors = d.get("errors") or []
             err_value = ""
             if errors and isinstance(errors, list):
                 err_value = errors[0].get("value", "") or errors[0].get("type", "")
             elif d.get("description"):
                 err_value = str(d.get("description"))
-            low = (err_value or "").lower()
-            if "limit" in low or "limit" in str(d).lower():
+            low = (err_value or "").lower() + " " + str(d).lower()
+            if "limit" in low and "applied" not in low:
                 return False, {"error": "daily_limit", "data": d}
-            if "already" in low or "exist" in low or "duplicate" in low:
+            if "already" in low or "duplicate" in low:
                 return "already", {"data": d}
             if "test" in low or "questionnaire" in low:
                 return False, {"error": "needs_test", "data": d}
-            if "archived" in low or "not_found" in low or "unavailable" in low or "hidden" in low:
+            if "archived" in low or "not_found" in low or "vacancy_not_found" in low or "unavailable" in low or "hidden" in low:
                 return "already", {"error": "unavailable", "data": d}
-            return False, {"error": err_value or "bad_request", "data": d}
-        if r.status_code in (401, 403):
-            # Token expired — clear and retry once
+            return False, {"error": err_value or "bad_request", "status": r.status_code, "data": d}
+        if r.status_code == 401:
             TOKEN_FILE.unlink(missing_ok=True)
             return False, {"error": "auth_expired"}
         if r.status_code == 404:
