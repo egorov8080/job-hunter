@@ -39,24 +39,16 @@ def _load_cookies() -> dict[str, str]:
 
 
 def _headers(xsrf: str, accept_html: bool = False) -> dict[str, str]:
-    accept = (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        if accept_html
-        else "application/json, text/javascript, */*; q=0.01"
-    )
-    return {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": accept,
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8",
+    # Minimal headers — same as Vlad's reference. Extra headers like
+    # X-Requested-With / Accept caused 400 "unknown" with HH WAF.
+    h = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Origin": "https://hh.ru",
-        "Referer": "https://hh.ru/",
-        "X-Requested-With": "XMLHttpRequest",
         "X-XsrfToken": xsrf,
     }
+    if accept_html:
+        h["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    return h
 
 
 def _randomize_letter(text: str) -> str:

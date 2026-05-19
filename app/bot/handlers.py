@@ -261,9 +261,14 @@ async def btn_settings(message: Message, **kw):
 @router.message(Command("logs"))
 @admin_only
 async def btn_logs(message: Message, **kw):
+    # Show only enabled platforms (habr cap=0 means disabled)
+    enabled = ["hh"]
+    if settings.max_applies_per_day_habr > 0:
+        enabled.append("habr")
     async with async_session() as session:
         result = await session.execute(
             select(Application)
+            .where(Application.platform.in_(enabled))
             .order_by(Application.created_at.desc())
             .limit(10)
         )
