@@ -104,25 +104,21 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
         # Mix platforms a bit: interleave
         vacancies = all_vacs
 
+    # Static cover letter — used for normal applies (no questions, no required letter).
+    # Saves ~2-3k AI tokens per apply. AI letters used only when Playwright fallback
+    # kicks in for vacancies with questionnaires.
+    STATIC_LETTER = (
+        "Заинтересовала ваша вакансия. Имею коммерческий опыт в роли "
+        "системного и бизнес-аналитика: сбор и анализ требований, "
+        "BPMN / UML, проектирование REST API и интеграций, SQL, постановка "
+        "задач разработчикам, приёмка результатов. Готов обсудить детали "
+        "и пройти интервью.\n\n"
+        "Контакты: i.egorov8080@gmail.com, tg @egorov_analyst"
+    )
+
     for vacancy in vacancies:
         try:
-            # Генерируем сопроводительное
-            letter, inp_tok, out_tok = await claude_ai.generate_cover_letter(
-                vacancy.title,
-                vacancy.description or "",
-            )
-
-            # Сохраняем генерацию AI
-            async with async_session() as session:
-                session.add(AIGeneration(
-                    vacancy_id=vacancy.id,
-                    gen_type="cover_letter",
-                    prompt=f"Cover letter for: {vacancy.title}",
-                    response=letter,
-                    input_tokens=inp_tok,
-                    output_tokens=out_tok,
-                ))
-                await session.commit()
+            letter = STATIC_LETTER
 
             # HH через OAuth API (быстро, обходит DDoS Guard)
             result = False
@@ -142,11 +138,31 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
                         err = (info or {}).get("error", "")
                         if err == "needs_test":
                             log.info("hh_fallback_playwright_for_test", vacancy_id=vacancy.id)
+                            # Vacancy has questionnaire — generate AI letter (it's worth tokens here)
+                            try:
+                                ai_letter, inp_tok, out_tok = await claude_ai.generate_cover_letter(
+                                    vacancy.title,
+                                    vacancy.description or "",
+                                )
+                                # Save AI generation record
+                                async with async_session() as session:
+                                    session.add(AIGeneration(
+                                        vacancy_id=vacancy.id,
+                                        gen_type="cover_letter",
+                                        prompt=f"Cover letter for: {vacancy.title}",
+                                        response=ai_letter,
+                                        input_tokens=inp_tok,
+                                        output_tokens=out_tok,
+                                    ))
+                                    await session.commit()
+                            except Exception as e:
+                                log.warning("ai_letter_skip", error=str(e))
+                                ai_letter = letter
                             parser = HHParser()
                             try:
                                 await asyncio.wait_for(parser.login(), timeout=60)
                                 result = await asyncio.wait_for(
-                                    parser.apply_to_vacancy(vacancy.url, letter),
+                                    parser.apply_to_vacancy(vacancy.url, ai_letter),
                                     timeout=180,
                                 )
                             except asyncio.TimeoutError:
