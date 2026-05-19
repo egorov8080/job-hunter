@@ -957,7 +957,7 @@ async def cmd_test_apply(message: Message, **kw):
                 await _async.wait_for(pw_parser.login(), timeout=60)
                 res = await _async.wait_for(
                     pw_parser.apply_to_vacancy(v.url, ai_letter, screenshot_name=tag),
-                    timeout=180,
+                    timeout=300,
                 )
                 info = {"path": "playwright", "result": str(res)}
             except _async.TimeoutError:

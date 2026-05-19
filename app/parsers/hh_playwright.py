@@ -600,17 +600,16 @@ class HHPlaywright:
         except Exception as e:
             log.warning("hh_radio_processing_error", error=str(e))
 
+        # Collect all questions first, then ONE batched AI call (10x faster).
+        question_pairs: list[tuple[Any, str]] = []
         for ta in question_textareas:
             try:
-                # Extract question text — closest preceding label or paragraph
                 question = await ta.evaluate(
                     """el => {
-                        // Walk up looking for previous siblings/labels
                         let cur = el;
                         for (let i = 0; i < 6; i++) {
                             cur = cur.parentElement;
                             if (!cur) break;
-                            // Look at children before the textarea
                             const labels = cur.querySelectorAll('label, p, div, span, h1, h2, h3, h4');
                             for (const node of labels) {
                                 if (node.contains(el)) continue;
@@ -624,41 +623,71 @@ class HHPlaywright:
                     }"""
                 )
                 if not question:
-                    log.warning("hh_question_text_empty")
                     continue
+                question_pairs.append((ta, question))
+            except Exception as e:
+                log.warning("hh_question_extract_error", error=str(e))
 
-                log.info("hh_question_found", question=question[:120])
+        log.info("hh_questions_collected", count=len(question_pairs))
 
-                user_msg = (
-                    f"Вопрос работодателя в отклике на вакансию:\n{question}\n\n"
-                    f"Контекст вакансии: {vacancy_url}\n\n"
-                    "Дай чёткий короткий ответ от первого лица (2-4 предложения максимум). "
-                    "Используй факты из моего резюме, не выдумывай. "
-                    "Если это тестовое задание — выполни его. "
-                    "Готовые ответы для типовых вопросов:\n"
-                    "  - Зарплата → от 150 000 руб\n"
-                    "  - Местоположение → г. Егорьевск Московской области; готов на удалёнку или поездки в Москву\n"
-                    "  - Военный билет → имеется\n"
-                    "  - Командировки → готов\n"
-                    "  - Английский язык → A2 (elementary), читаю документацию, разговорный базовый\n"
-                    "  - Переезд → возможен, готов обсуждать условия\n"
-                    "  - Команда → отвечай исходя из проектов в резюме"
-                )
-                system = (
-                    "Ты — кандидат, отвечающий на вопрос работодателя при отклике на вакансию. "
-                    "Используй ТОЛЬКО факты из резюме, ничего не выдумывай. "
-                    "НЕ представляйся (HR видит имя в резюме).\n\n"
-                    f"Профиль кандидата:\n{cfg.resume_text}"
-                )
-                try:
-                    answer_text, _, _ = await claude_ai._call(system, user_msg, max_tokens=600)
-                    answer_text = answer_text.strip()
-                except Exception as e:
-                    log.error("hh_answer_gen_error", error=str(e))
-                    answer_text = "Готов обсудить детали на собеседовании."
+        # Build one batched prompt
+        answers_map: dict[int, str] = {}
+        if question_pairs:
+            numbered = "\n".join(f"[{i+1}] {q}" for i, (_, q) in enumerate(question_pairs))
+            user_msg = (
+                f"Контекст вакансии: {vacancy_url}\n\n"
+                f"Вопросы работодателя ({len(question_pairs)} шт):\n{numbered}\n\n"
+                "Дай короткие ответы (2-4 предложения каждый) от первого лица. "
+                "Используй ТОЛЬКО факты из резюме, не выдумывай. "
+                "Если есть тестовое задание — выполни. "
+                "Готовые ответы для типовых вопросов:\n"
+                "  - Зарплата → от 150 000 руб на руки, готов обсуждать\n"
+                "  - Местоположение / РФ → г. Егорьевск Московской области, проживаю в РФ\n"
+                "  - Работа на территории заказчика в Москве → готов, регулярные поездки приемлемы\n"
+                "  - Военный билет → имеется\n"
+                "  - Командировки → готов\n"
+                "  - Английский → A2 (elementary), читаю документацию\n"
+                "  - Переезд → возможен, готов обсуждать\n"
+                "  - Когда выйдешь → 1-2 недели после оффера (рапорт + сдача дел)\n"
+                "  - Причина поиска → текущий проект в фазе поддержки, ищу более активную IT-роль\n"
+                "  - Что ближе BA/SA → системный аналитик ближе, но равно комфортно в BA\n"
+                "  - Документы (ТЗ, ЧТЗ, ПМИ, ПЗ) → ТЗ, ЧТЗ — постоянно, ПМИ и ПЗ — реже\n"
+                "  - Опыт REST/SOAP → REST постоянно (договоры API, Swagger), SOAP реже\n"
+                "  - Приёмо-сдаточные испытания → несколько раз, проводил UAT с заказчиком\n"
+                "  - Внешние заказчики → сбор требований через интервью и анкетирование\n\n"
+                "Ответь СТРОГО в формате JSON:\n"
+                "{\"1\": \"ответ 1\", \"2\": \"ответ 2\", ...}\n"
+                "Без markdown, без пояснений, только JSON."
+            )
+            system = (
+                "Ты — кандидат, отвечающий на вопросы работодателя при отклике. "
+                "Используй ТОЛЬКО факты из резюме, ничего не выдумывай. "
+                "НЕ представляйся (HR видит имя в резюме).\n\n"
+                f"Профиль кандидата:\n{cfg.resume_text}"
+            )
+            try:
+                ai_resp, _, _ = await claude_ai._call(system, user_msg, max_tokens=2000)
+                ai_resp = ai_resp.strip()
+                # Strip markdown if present
+                if ai_resp.startswith("```"):
+                    ai_resp = ai_resp.split("\n", 1)[1].rsplit("```", 1)[0]
+                import json as _json
+                parsed = _json.loads(ai_resp)
+                for k, v in parsed.items():
+                    try:
+                        answers_map[int(k)] = str(v).strip()
+                    except (ValueError, TypeError):
+                        pass
+                log.info("hh_batch_answers_parsed", count=len(answers_map))
+            except Exception as e:
+                log.error("hh_batch_answer_error", error=str(e)[:200])
 
+        # Fill answers
+        for i, (ta, question) in enumerate(question_pairs):
+            answer_text = answers_map.get(i + 1) or "Готов обсудить детали на собеседовании."
+            try:
                 await human_type(ta, answer_text, cfg.type_delay_min, cfg.type_delay_max)
-                await page.wait_for_timeout(700)
+                await page.wait_for_timeout(400)
                 log.info("hh_question_answered", chars=len(answer_text), q=question[:60])
             except Exception as e:
                 log.warning("hh_question_fill_error", error=str(e))

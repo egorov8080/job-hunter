@@ -163,7 +163,7 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
                                 await asyncio.wait_for(parser.login(), timeout=60)
                                 result = await asyncio.wait_for(
                                     parser.apply_to_vacancy(vacancy.url, ai_letter),
-                                    timeout=180,
+                                    timeout=300,
                                 )
                             except asyncio.TimeoutError:
                                 result = False
