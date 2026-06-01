@@ -79,9 +79,11 @@ async def run_vacancy_search():
 
             for query in SEARCH_QUERIES:
                 try:
+                    # remote=False → НЕ ставим фильтр schedule=remote, ищем ВСЁ:
+                    # удалёнка, гибрид, офис, по всей России (по запросу пользователя).
                     vacancies = await parser.search_vacancies(
                         query,
-                        remote=True,
+                        remote=False,
                     )
                     saved = await _save_vacancies(vacancies)
                     total_new += saved
