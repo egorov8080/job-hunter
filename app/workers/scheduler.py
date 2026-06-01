@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
@@ -457,10 +457,16 @@ class WorkerScheduler:
             else:
                 window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
+            # created_at в БД хранится как наивное UTC (SQLite игнорирует tz).
+            # window_start — MSK-aware. Без перевода в UTC окно "уезжает" на 3
+            # часа вперёд и запрос всегда возвращает 0 (отсюда "откликов не было"
+            # при растущем дневном счётчике). Сравниваем в UTC-naive.
+            window_start_db = window_start.astimezone(timezone.utc).replace(tzinfo=None)
+
             async with async_session() as session:
                 rows = (await session.execute(
                     select(Application.platform, Application.status, func.count(Application.id))
-                    .where(Application.created_at >= window_start)
+                    .where(Application.created_at >= window_start_db)
                     .group_by(Application.platform, Application.status)
                 )).all()
 
@@ -505,7 +511,7 @@ class WorkerScheduler:
                     select(Vacancy.title, Vacancy.ai_score, Application.platform)
                     .join(Vacancy, Application.vacancy_id == Vacancy.id)
                     .where(
-                        Application.created_at >= window_start,
+                        Application.created_at >= window_start_db,
                         Application.status == ApplicationStatus.SENT,
                     )
                     .order_by(Vacancy.ai_score.desc().nullslast())
@@ -516,7 +522,7 @@ class WorkerScheduler:
                 err_rows = (await session.execute(
                     select(Application.error_message, func.count(Application.id))
                     .where(
-                        Application.created_at >= window_start,
+                        Application.created_at >= window_start_db,
                         Application.status == ApplicationStatus.FAILED,
                         Application.error_message.isnot(None),
                     )
