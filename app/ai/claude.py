@@ -156,8 +156,27 @@ class ClaudeAI:
 {vacancy_description}"""
 
         text, inp_tok, out_tok = await self._call(system, user_msg, max_tokens=512)
+        text = (text or "").strip()
+
+        # Страховка: AI иногда «честно» отказывается писать письмо (несовпадение
+        # профессии) и присылает рассуждение/совет вместо письма. Такое НЕЛЬЗЯ
+        # отправлять рекрутёру. Признак настоящего письма — строка контактов.
+        # Признаки отказа — характерные фразы. Если что-то не так, откатываемся
+        # на безопасный шаблон.
+        low = text.lower()
+        refusal_markers = (
+            "не могу", "вынужден быть честным", "разные профессии",
+            "выдумать", "выдумывать", "ищите вакансии", "могу помочь с письмом",
+            "релевантной вакансии", "не буду",
+        )
+        looks_like_letter = "egorov8080@gmail.com" in low and not any(m in low for m in refusal_markers)
+        if not looks_like_letter:
+            from app.parsers.letter_template import render_letter
+            log.warning("ai_cover_letter_rejected", title=vacancy_title[:60], preview=text[:80])
+            return render_letter(vacancy_title), inp_tok, out_tok
+
         log.info("ai_cover_letter_generated", title=vacancy_title[:60])
-        return text.strip(), inp_tok, out_tok
+        return text, inp_tok, out_tok
 
     async def generate_reply(self, recruiter_message: str, vacancy_context: str = "", platform: str = "") -> tuple[str, int, int]:
         platform_name = {"hh": "hh.ru", "habr": "Хабр Карьера", "avito": "Авито"}.get(platform, platform or "сайт вакансий")
